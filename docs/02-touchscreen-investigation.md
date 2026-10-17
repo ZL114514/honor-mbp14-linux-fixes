@@ -125,3 +125,41 @@ pin 0 (PECI) 0:INTC105E:00 mode 1 0x40000700 0x0003c000 0x00000000 [ACPI]
 - 若要继续：需要 Windows 侧 RWEverything 同时 dump
   （EC 0x00-0xFF + GPI0 MMIO `0xE0D10000/0xE0D20000/0xE0D30000`）再和 Linux 侧
   `/sys/kernel/debug/pinctrl/INTC105E:00/pins` 做对照
+
+
+## 补充：计划 A（直接改 pad mux）为什么行不通
+
+尝试用 `/dev/mem` 直接读写 PCH GPIO 的 PADCFG 寄存器：
+
+```
+open /dev/mem, lseek 0xE0D10000 -> read -> EPERM (Operation not permitted)
+```
+
+原因：GPIO 三个 community（`0xE0D10000/0xE0D20000/0xE0D30000`）已登记在
+`/proc/iomem` 的 `INTC105E:00` 名下并被 pinctrl 驱动占用，`/dev/mem` 对
+driver-claimed 区域一律拒绝（`0xFE0B0000` 那个 EC 窗口没被占用，所以能读）。
+
+改用 `/dev/gpiochip0`（libgpiod）可以看到 451 条线：**406 input / 44 output**，
+44 条 output 全是 BIOS/EC 驱动的使能脚（`GPP_C_5/C_8/C_15`、`GPP_A_12/A_20`、
+`GPP_E_2/E_6`、`GPP_H_0/1/2/19`、`GPP_F_19/20/21`、`GPP_B_*`、`CNV_BTEN`…），
+且 `gpioinfo` 里**没有任何 consumer**。
+
+关键推理：**这些 pad 的电平是 BIOS 在 POST 时设好的，与后面启动哪个 OS 无关**。
+Windows 能用触控，说明这个电平状态本身就"对"；在 Linux 里把它翻过来只可能
+弄坏别的东西，不可能揭示根因。所以计划 A 从逻辑上就不成立，已放弃。
+
+## 唯一还有意义的对照实验
+
+需要 Windows 侧同一批 GPIO 寄存器（64KB × 3 community）的 dump，与 Linux 的
+`data/pinctrl/pins_linux.txt` 逐 pad 对比，**专门找"Windows 驱动成输出、
+Linux 却是输入"的 pad** —— 那才是 Windows 多做的动作（比如把触控 RESET 拉高）。
+
+RWEverything 的 Memory 窗口地址是 **64 位**，必须输入完整 16 位十六进制：
+
+```
+00000000E0D10000   -> gpio_c1.bin
+00000000E0D20000   -> gpio_c2.bin
+00000000E0D30000   -> gpio_c3.bin
+```
+
+（第一次抓的 `ME0D10000...rw` 就是因为只填了 8 位，被当成 `E0D1000000000000`，全 0。）
