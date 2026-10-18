@@ -163,3 +163,37 @@ RWEverything 的 Memory 窗口地址是 **64 位**，必须输入完整 16 位�
 ```
 
 （第一次抓的 `ME0D10000...rw` 就是因为只填了 8 位，被当成 `E0D1000000000000`，全 0。）
+
+
+## 最终的 GPIO 对照尝试（失败，且说明原因）
+
+Windows 侧用 RWEverything 抓了三个 community，但 **RW 的 Memory 窗口一次只保存一屏
+0x100 字节**（不是 64KB），得到的只有 community 头部寄存器：
+
+```
+E0D10000: 00 00 96 00 40 03 00 00 FF FF FF FF 00 06 00 00 ...
+E0D20000: 00 00 96 00 40 03 00 00 FF FF FF FF 00 06 00 00 ...   (与上仅差 1 字节)
+E0D30000: 00 00 96 00 18 03 00 00 FF FF FF FF 00 06 00 00 ...
+```
+
+（GPIO 中断状态/使能寄存器，三个 community 几乎一样）
+
+拿 Linux `pins` 表里 208 个不同的 PADCFG 值去匹配这 256 字节 —— 除了 0x00000000
+以外没有任何命中，**说明 pad 配置寄存器不在这 0x100 字节里**（pad 区在 community
+更靠后的偏移）。RW 要抓满 64KB 需要翻 256 屏，不现实。
+
+即使抓到完整 64KB，期望值也有限：**pad 电平是 BIOS 在 POST 时设死的，与启动哪个
+OS 无关**。真正有意义的只是"Windows 驱动主动驱动了某个 pad"，而这个假说没有任何
+旁证（Linux 侧 `gpioinfo` 显示 451 条线无任何 consumer）。
+
+## 触控屏最终结论
+
+- 硬件存在且在 Windows 下工作（注册表 `ACPI\FTSC1000\2` + 3 个 HID collection，
+  `Col01` = `HID_DEVICE_UP:000D_U:0004` Touch Screen）
+- Linux 侧：ACPI 节点 → i2c client → `i2c_hid_acpi` 链路全部正常，但设备在 I2C2 上
+  **完全不 ACK**（全地址扫描 0 应答）
+- EC 状态与 Windows"触控开"完全一致（`0x45=0x01`），且 EC 两个开关位经端口与 MMIO
+  两条路径写入均无效 —— 说明它不是电源门控
+- DSDT + 26 个 SSDT 中没有任何触控屏电源/复位控制
+- 结论：**触控模块的供电/复位走 EC 私有通道或面板内部时序，Linux 侧无法触达**。
+  在拿到厂商 EC 协议或面板时序文档之前，无法修复。
