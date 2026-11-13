@@ -1,7 +1,8 @@
 # honor-mbp14-linux-fixes
 
 > HONOR MagicBook Pro 14 (FMB-P, Intel Core Ultra 5 225H) 在 Arch Linux 下的修复集：
-> 原厂 ACPI DSDT 二进制补丁、蓝牙、热区，以及触控屏的完整调查记录。
+> 原厂 ACPI DSDT 二进制补丁、蓝牙、热区、触控屏（SSDT 电源资源挂错节点的绕行方案），
+> 以及 Fn+F7 麦克风静音键的定位记录。
 
 ## 机器
 
@@ -10,7 +11,7 @@
 | 型号 | HONOR MagicBook Pro 14 (FMB-P) |
 | CPU | Intel Core Ultra 5 225H (Arrow Lake-H) |
 | BIOS | 1.13 (INSYDE) |
-| 系统 | Arch Linux (kernel 7.1.5-arch1-2) |
+| 系统 | Arch Linux (kernel 7.2.11-arch1-1) |
 | 触控板 | `BLTP7853` @ `\_SB.PC00.I2C1.TPD0`, I2C `0x2C` |
 | 触控屏 | `FTSC1000` @ `\_SB.PC00.I2C2.TPL1`, I2C `0x38` |
 | 电池 | `BAT0` / `ADP1` |
@@ -25,7 +26,8 @@
 | **ACPI 错误** | 182 条 `ACPI BIOS Error` + 整表加载失败 | ✅ 3 条 |
 | **内核驱动栈** | `intel-lpss` / `pinctrl-intel` / `i2c-hid` 全部 probe 失败 | ✅ 正常 |
 | **蓝牙** | `bluetooth.service` 未启用、无 `bluetoothctl` | ✅ `hci0` powered |
-| **触控屏** | 不存在 | ❌ 未解决（见下方） |
+| **触控屏** | 不存在（0x38 全程 NAK） | ✅ 已解决（见第四节 / `docs/03`）|
+| **Fn+F7 麦克风** | 能静音，再按不恢复 | ⚠️ 根因已定位、修复未刷（见 `docs/04`）|
 
 ## 一、根因：原厂 DSDT 存在致命 AML 错误
 
@@ -103,37 +105,96 @@ DSDT 修好后 ACPI thermal zone 从 4 个补全到 13 个：
 `acpitz`、`INT3400 Thermal`、`iwlwifi_1`。风扇曲线与过热降频策略自此有数据可用
 （可选 `thermald`）。
 
-## 四、触控屏：未解决（完整调查记录）
+## 四、触控屏：已解决
 
-硬件是好的（Windows 侧注册表有 `ACPI\FTSC1000\2` 与 3 个 HID collection，
-其中 `Col01` 是 `HID_DEVICE_UP:000D_U:0004` Touch Screen），但 **Linux 下控制器
-在 I2C 上完全不应答**。
+**根因不在驱动，也不在 EC，而是厂商 SSDT 把电源资源挂错了父节点。**
 
-已排除：
+触控屏的真实节点是 `\_SB.PC00.I2C2.TPL1`（`FTSC1000`，FocalTech `2808:5662`），
+但触控屏的电源资源 `PTPL` 定义在 `SSDT20` 的 `\_SB.PC00.I2C5` 作用域下：
 
-| 可能原因 | 排除依据 |
-|---|---|
-| I2C 地址不对 | bus2 上 `0x08`~`0x77` 全地址只读扫描，0 应答（对照 bus1 的 NFC 正常）|
-| 上电时序 / 初始化缺失 | S3 睡眠唤醒后面板重新上电，仍 NAK |
-| EC 软件开关 | 管家开关 = EC `0x45` 的 `DETP`/`GTPS` 位；Linux 本来就处于"开"状态（`0x45=0x01`）|
-| EC 那两个位是电源门控 | EC 端口写 + **MMIO `0xFE0B0045`**（= DSDT 的真实路径）+ 6 种 `TPON×DETP` 组合轮询，均无效果 |
-| ACPI 电源管理 | `FTSC1000` 无 `_PS0/_PS3/power_state` |
-| AML 里有触控屏电源/复位控制 | DSDT + 全部 26 个 SSDT 翻完，`T1PE/T1PR/T1IP/T1EP/T1RP` 等"使能"变量在 AML 里零引用 |
+```asl
+Scope (\_SB.PC00.I2C5)
+{
+    PowerResource (PTPL, ...)         { _ON { 上电; 释放复位; 配中断 } }
+    Scope (TPL1) { ... _PR0 → PTPL }  // 本 SKU 没有 I2C5，这行开机就 AE_NOT_FOUND
+}
+```
 
-结论：控制器大概率**有电但信号到不了**（I2C2 引脚 mux）或供电走 EC 私有通道。
-完整时间线与数据见 [`docs/02-touchscreen-investigation.md`](docs/02-touchscreen-investigation.md)。
+于是 ACPI 从不调用 `PTPL._ON`，BIOS 留在复位脚 `GPP_A_12` 的低电平一直不撤，
+芯片不 ACK。现场执行一次 `_ON` 即可点亮：
+
+```
+T1PE = 0x140813 → GPIO 179 (GPP_H_19)  电源使能，开机已为 1
+T1PR = 0x14040c → GPIO 108 (GPP_A_12)  复位，开机为 0  ← 卡在这里
+T1GI = 0x14040b → GPIO 107 (GPP_A_11)  中断
+
+PTPL._ON 后: GPP_A_12 0x84000200 → 0x84000201，0x38 立刻 ACK
+bind i2c-FTSC1000:00 → hid-multitouch 2808:5662，出现 /dev/input/eventN
+```
+
+开机 + 唤醒自动完成这一步：
+
+```bash
+sudo ./scripts/install-touchscreen.sh install
+```
+
+一个 oneshot 服务调 `PTPL._ON` 并绑定驱动，一个 `systemd-sleep` 钩子在唤醒后
+重跑（`--force`，因为 D3 回来时驱动可能还挂着但设备已死）。全部幂等，
+`install-touchscreen.sh remove` 可完全卸载。
+
+根因推导、寄存器取证与 A/B 验证见
+[`docs/03-touchscreen-solved.md`](docs/03-touchscreen-solved.md)；
+早期"电源走 EC 私有通道"的错误结论存档在
+[`docs/02-touchscreen-investigation.md`](docs/02-touchscreen-investigation.md)
+（错在只 grep 了 DSDT，而引用在 SSDT20 里且用了别名）。
+
+## 五、Fn+F7 麦克风静音
+
+第一次按 F7（未静音 → 静音）走 EC `_Q14`，WMI 事件码 `0x0287`，
+`huawei-wmi` 映射为 `KEY_MICMUTE`，正常静音。
+再按一次走 `_Q18`，事件码 **`0x0288`**，驱动表里没有这一项：
+
+```
+input input14: Unknown key pressed, code: 0x0288
+```
+
+事件在 `input_handle_event()` 就被丢掉，用户态（evdev/hwdb/自定义守护进程）
+都拿不到，所以永远解不了静音。EC 上报的是**动作结果**，不是按键动作，
+所以两个码都要映射成 `KEY_MICMUTE`。
+
+修法二选一（都还没应用）：
+
+1. 驱动加 DMI quirk（推荐，不动固件）；
+2. DSDT 单字节补丁：`_Q18` 的 `0x0288` → `0x0287`，
+   用 `patches/patch_fn_f7.py` 生成，已离线验证反编译与校验和，未真机启动。
+
+注意：上游内核正在把 `0x0288` 映射成 `KEY_CAMERA_ACCESS_TOGGLE`（别的 Honor
+机型的摄像头快门键），**升级内核不能修好这台机器**，反而可能误触发摄像头开关。
+
+细节见 [`docs/04-fn-f7-micmute.md`](docs/04-fn-f7-micmute.md)。
+临时恢复：`wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`。
 
 ## 目录结构
 
 ```
 docs/01-acpi-dsdt-fix.md              ACPI 修复全过程 + 回滚/救援手册
-docs/02-touchscreen-investigation.md  触控屏调查记录
+docs/02-touchscreen-investigation.md  触控屏早期调查（结论已作废，存档）
+docs/03-touchscreen-solved.md         触控屏根因、取证与开机/唤醒自动化
+docs/04-fn-f7-micmute.md              Fn+F7 只能静音不能恢复：0x0288 未被映射
 patches/patch_dsdt.py                 可复现的 DSDT 二进制修补器
+patches/patch_fn_f7.py                _Q18 0x0288 -> 0x0287 单字节补丁生成器（未刷）
 patches/dsdt_fixed.aml                已打补丁并验证的 DSDT (BIOS 1.13)
 scripts/install-dsdt-override.sh      安装/卸载 initramfs ACPI 覆盖
+scripts/touchscreen-up.sh             调 PTPL._ON + 绑定 i2c-hid（幂等）
+scripts/touchscreen.service           开机 oneshot 单元
+scripts/touchscreen-sleep-hook.sh     唤醒后重跑的 systemd-sleep 钩子
+scripts/install-touchscreen.sh        安装/卸载开机服务与唤醒钩子
 scripts/ec_dump.sh                    EC RAM 快照/对比工具
+data/acpi/SSDT20-tplptl.dsl           SSDT20 里挂错父节点的电源资源原文
 data/ec/                              EC 256 字节快照（Linux / Windows 开 / Windows 关）
+data/i2c/ftsc1000-hid-descriptor.txt  _ON 之后读到的 HID 描述符（VID/PID 自证）
 data/pinctrl/pins_linux.txt           PCH GPIO 289 个 pad 的 mode + PADCFG 全表
+data/pinctrl/touchscreen_pads.txt     复位/电源/中断三个 pad 的 _ON 前后对照
 ```
 
 ## 数据文件说明

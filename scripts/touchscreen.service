@@ -1,0 +1,14 @@
+[Unit]
+Description=Honor FMB-P touchscreen power-on (PTPL._ON + i2c-hid bind)
+# Panel is up only after this runs; nothing else depends on it, so keep it early
+# but ordered after module loading and udev.
+After=systemd-modules-load.service systemd-udevd.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/honor-touchscreen/touchscreen-up.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

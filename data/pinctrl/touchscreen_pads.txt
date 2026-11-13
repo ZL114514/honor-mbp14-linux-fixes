@@ -1,0 +1,24 @@
+# Touchscreen-related pads, INTC105E:00 (meteorlake-pinctrl), 2026-11-14
+# Source: /sys/kernel/debug/pinctrl/INTC105E:00/pins
+#
+# Before PTPL._ON (BIOS left this): reset held low -> i2c 0x38 NAK
+pin 64 (GPP_A_11) 107:INTC105E:00 GPIO 0x80800102 0x00002853 0x00000000 [LOCKED tx]
+pin 65 (GPP_A_12) 108:INTC105E:00 GPIO 0x84000200 0x00000054 0x00000000
+pin 122 (GPP_H_19) 179:INTC105E:00 GPIO 0x84000201 0x0000002b 0x00000000 [LOCKED tx, ACPI]
+
+# After \_SB.PC00.I2C5.PTPL._ON: reset released -> ACK
+pin 64 (GPP_A_11) 107:INTC105E:00 GPIO 0x80800102 0x00002853 0x00000000 [LOCKED tx]
+pin 65 (GPP_A_12) 108:INTC105E:00 GPIO 0x84000201 0x00000054 0x00000000
+pin 122 (GPP_H_19) 179:INTC105E:00 GPIO 0x84000201 0x0000002b 0x00000000 [LOCKED tx, ACPI]
+
+# After PTPL._OFF (only used for the A/B test, not installed anywhere)
+pin 64 (GPP_A_11) 107:INTC105E:00 GPIO 0x80900102 0x00002853 0x00000000 [LOCKED tx]
+pin 65 (GPP_A_12) 108:INTC105E:00 GPIO 0x84000200 0x00000054 0x00000000
+pin 122 (GPP_H_19) 179:INTC105E:00 GPIO 0x84000201 0x0000002b 0x00000000 [LOCKED tx, ACPI]
+
+# Decoding (pinctrl-intel): PADCFG0 bit 0 = TX state (output level),
+# bit 1 = RX state, bits 10:8 = PMODE (0 = GPIO). The only bit that flips
+# between _OFF and _ON is bit 0 on GPP_A_12, i.e. the reset line itself.
+#
+# GPI numbers from GNVS: T1PE=0x140813 -> 179, T1PR=0x14040c -> 108,
+# T1GI=0x14040b -> 107 (\_SB.GNUM).

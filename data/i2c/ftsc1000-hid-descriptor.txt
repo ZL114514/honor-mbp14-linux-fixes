@@ -1,0 +1,23 @@
+# FTSC1000 HID descriptor, read over i2c-2 after PTPL._ON (2026-11-14)
+# Command: i2ctransfer -y 2 w2@0x38 0x01 0x00 r30@0x38
+#
+# 1e 00 00 01 dd 01 02 00 03 00 42 00 04 00 42 00
+# 05 00 06 00 08 28 62 56 02 62 00 00 00 00
+#
+# wHIDDescLength      0x001E (30 bytes)
+# bcdVersion          0x0100
+# wReportDescLength   0x01DD (477 bytes)
+# wReportDescRegister 0x0002
+# wInputRegister      0x0003
+# wMaxInputLength     0x0042 (66 bytes)
+# wOutputRegister     0x0004
+# wMaxOutputLength    0x0042
+# wCommandRegister    0x0005
+# wDataRegister       0x0006
+# wVendorID           0x2808  (FocalTech)
+# wProductID          0x5662
+# wVersionID          0x0262
+#
+# Matches the kernel's HID id 0018:2808:5662 -> "FTSC1000:00 2808:5662".
+# Before PTPL._ON the same transfer returned:
+#   Error: Sending messages failed: Remote I/O error (NAK)
