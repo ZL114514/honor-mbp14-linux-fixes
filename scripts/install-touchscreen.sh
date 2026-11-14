@@ -6,6 +6,7 @@ set -euo pipefail
 LIB=/usr/local/lib/honor-touchscreen
 UNIT=/etc/systemd/system/honor-touchscreen.service
 HOOK=/usr/lib/systemd/system-sleep/honor-touchscreen
+RULE=/etc/udev/rules.d/70-honor-touchscreen-unknown-node.rules
 SRC=$(cd "$(dirname "$0")" && pwd)
 
 need() { command -v "$1" >/dev/null || { echo "缺少 $1 ($2)"; exit 1; }; }
@@ -19,6 +20,10 @@ install)
     install -Dm755 "$SRC/touchscreen-up.sh" "$LIB/touchscreen-up.sh"
     install -Dm644 "$SRC/touchscreen.service" "$UNIT"
     install -Dm755 "$SRC/touchscreen-sleep-hook.sh" "$HOOK"
+    # Hide the bogus "UNKNOWN" HID node that spams KEY_MICMUTE (~60 Hz).
+    install -Dm644 "$SRC/70-honor-touchscreen-unknown-node.rules" "$RULE"
+    udevadm control --reload
+    udevadm trigger --action=change --subsystem-match=input
 
     systemctl daemon-reload
     systemctl enable honor-touchscreen.service
@@ -28,8 +33,9 @@ install)
     ;;
 remove)
     systemctl disable --now honor-touchscreen.service 2>/dev/null || true
-    rm -f "$UNIT" "$HOOK"
+    rm -f "$UNIT" "$HOOK" "$RULE"
     rm -rf "$LIB"
+    udevadm control --reload
     systemctl daemon-reload
     echo "已卸载（触控屏在下次重启前仍可用）"
     ;;
@@ -39,6 +45,13 @@ status)
     readlink -f /sys/bus/i2c/devices/i2c-FTSC1000:00/driver || echo "未绑定"
     echo "--- input ---"
     grep -A3 'Name="FTSC1000' /proc/bus/input/devices || echo "无 input 节点"
+    echo "--- 伪键盘节点 ---"
+    for e in /dev/input/event*; do
+        [ "$(cat "/sys/class/input/$(basename "$e")/device/name" 2>/dev/null)" = \
+          "FTSC1000:00 2808:5662 UNKNOWN" ] || continue
+        printf '%s ignore=%s\n' "$e" \
+            "$(udevadm info "$e" | grep -c '^E: LIBINPUT_IGNORE_DEVICE=1')"
+    done
     ;;
 *)
     echo "用法: $0 {install|remove|status}"; exit 1

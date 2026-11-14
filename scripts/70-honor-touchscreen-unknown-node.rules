@@ -1,0 +1,4 @@
+# Honor FMB-P: the FTSC1000 HID descriptor exports a bogus keyboard node
+# ("FTSC1000:00 2808:5662 UNKNOWN") that streams KEY_MICMUTE at ~60 Hz.
+# Hide it from libinput; the real touch node keeps the plain name.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="FTSC1000:00 2808:5662 UNKNOWN", ENV{LIBINPUT_IGNORE_DEVICE}="1"

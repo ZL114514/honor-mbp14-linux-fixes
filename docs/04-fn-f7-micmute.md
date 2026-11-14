@@ -164,3 +164,12 @@ wpctl set-mute <id> 0
 静音指示灯 `/sys/class/leds/platform::micmute` 由 `huawei-wmi` 注册
 （`default_trigger = "audio-micmute"`），实测跟随**软件**静音状态：
 解除静音后 `brightness=0`，再静音后回到 `1`。它不能用来判断 EC 侧状态。
+
+## 7. 相关但独立：空闲时静音自翻转
+
+2026-11-14 又发现一个症状相同的独立问题：触控屏 `FTSC1000` 的第二个 HID
+节点（`FTSC1000:00 2808:5662 UNKNOWN`）以约 60 Hz 刷 `KEY_MICMUTE`，
+经 niri → dms 反复翻转软件静音并闪灯，`dmesg` 里没有 WMI 事件。
+该问题已在输入层屏蔽，见
+[`docs/05-touchscreen-micmute-storm.md`](05-touchscreen-micmute-storm.md)。
+本文件讨论的 F7 `0x0288` 缺失仍未修复，两者互不影响。

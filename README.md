@@ -27,6 +27,7 @@
 | **内核驱动栈** | `intel-lpss` / `pinctrl-intel` / `i2c-hid` 全部 probe 失败 | ✅ 正常 |
 | **蓝牙** | `bluetooth.service` 未启用、无 `bluetoothctl` | ✅ `hci0` powered |
 | **触控屏** | 不存在（0x38 全程 NAK） | ✅ 已解决（见第四节 / `docs/03`）|
+| **静音自翻转 / 指示灯狂闪** | 空闲时约 60 Hz 翻转 | ✅ 忽略触控屏伪键盘节点（见 `docs/05`）|
 | **Fn+F7 麦克风** | 能静音，再按不恢复 | ⚠️ 根因已定位、修复未刷（见 `docs/04`）|
 
 ## 一、根因：原厂 DSDT 存在致命 AML 错误
@@ -174,6 +175,22 @@ input input14: Unknown key pressed, code: 0x0288
 细节见 [`docs/04-fn-f7-micmute.md`](docs/04-fn-f7-micmute.md)。
 临时恢复：`wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0`。
 
+### 另一个独立问题：空闲时静音自翻转（已解决）
+
+触控屏 `FTSC1000` 的 HID 描述符里还有一个 `UNKNOWN` 集合，被内核枚举成
+第二个键盘节点（`Handlers=kbd`），唯一键位是 `KEY_MICMUTE`，空闲时以约
+60 Hz 持续上报，niri 每次都会执行 `dms ipc call audio micmute`，于是静音
+状态与指示灯一起狂闪。它与 F7 的 `0x0288` 无关（`dmesg` 里没有 WMI 事件）。
+
+修法是按完整设备名让 libinput 忽略这个节点，触控节点不受影响：
+
+```
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="FTSC1000:00 2808:5662 UNKNOWN", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+```
+
+`install-touchscreen.sh` 会自动安装。取证、A/B 与回滚见
+[`docs/05-touchscreen-micmute-storm.md`](docs/05-touchscreen-micmute-storm.md)。
+
 ## 目录结构
 
 ```
@@ -181,6 +198,7 @@ docs/01-acpi-dsdt-fix.md              ACPI 修复全过程 + 回滚/救援手册
 docs/02-touchscreen-investigation.md  触控屏早期调查（结论已作废，存档）
 docs/03-touchscreen-solved.md         触控屏根因、取证与开机/唤醒自动化
 docs/04-fn-f7-micmute.md              Fn+F7 只能静音不能恢复：0x0288 未被映射
+docs/05-touchscreen-micmute-storm.md  触控屏伪键盘节点刷 KEY_MICMUTE：静音自翻转
 patches/patch_dsdt.py                 可复现的 DSDT 二进制修补器
 patches/patch_fn_f7.py                _Q18 0x0288 -> 0x0287 单字节补丁生成器（未刷）
 patches/dsdt_fixed.aml                已打补丁并验证的 DSDT (BIOS 1.13)
@@ -188,7 +206,8 @@ scripts/install-dsdt-override.sh      安装/卸载 initramfs ACPI 覆盖
 scripts/touchscreen-up.sh             调 PTPL._ON + 绑定 i2c-hid（幂等）
 scripts/touchscreen.service           开机 oneshot 单元
 scripts/touchscreen-sleep-hook.sh     唤醒后重跑的 systemd-sleep 钩子
-scripts/install-touchscreen.sh        安装/卸载开机服务与唤醒钩子
+scripts/install-touchscreen.sh        安装/卸载开机服务、唤醒钩子与 udev 规则
+scripts/70-honor-touchscreen-unknown-node.rules  让 libinput 忽略伪键盘节点
 scripts/ec_dump.sh                    EC RAM 快照/对比工具
 data/acpi/SSDT20-tplptl.dsl           SSDT20 里挂错父节点的电源资源原文
 data/ec/                              EC 256 字节快照（Linux / Windows 开 / Windows 关）

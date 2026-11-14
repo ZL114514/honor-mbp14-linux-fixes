@@ -195,3 +195,11 @@ sudo ./scripts/install-touchscreen.sh remove
 
 之后触控屏回到"不可用但无害"状态（`i2c_hid_acpi` probe 失败，仅一条 ENXIO，
 不影响启动）。想临时点亮仍然可以手动执行 `touchscreen-up.sh`。
+
+## 8. 已知副作用（已修）
+
+FTSC1000 的 HID 描述符还会导出一个 `UNKNOWN` 集合，内核把它注册成键盘节点，
+空闲时以约 60 Hz 上报 `KEY_MICMUTE`，导致静音状态和指示灯狂闪。
+已在输入层用 udev 规则让 libinput 忽略该节点，触控不受影响，见
+[`docs/05-touchscreen-micmute-storm.md`](05-touchscreen-micmute-storm.md)。
+
